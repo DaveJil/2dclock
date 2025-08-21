@@ -148,17 +148,16 @@ static void addQuad(std::vector<float>& v, float x1,float y1,float x2,float y2,f
     float dx2=x1-px,dy2=y1-py;
     v.insert(v.end(), { ax,ay, bx,by, cx,cy,  ax,ay, cx,cy, dx2,dy2 });
 }
-// segment endpoints in local digit space
 static const float X0=-0.45f, X1=0.45f, Y0=-0.60f, Y1=0.60f, Ym=0.0f;
 static void genDigitFilled(int d, float thickness, std::vector<float>& v){
     v.clear();
-    auto A=[&](){ addQuad(v,X0,Y1, X1,Y1, thickness); }; // top
-    auto B=[&](){ addQuad(v,X1,Y1, X1,Ym, thickness); }; // upper right
-    auto C=[&](){ addQuad(v,X1,Ym, X1,Y0, thickness); }; // lower right
-    auto D=[&](){ addQuad(v,X0,Y0, X1,Y0, thickness); }; // bottom
-    auto E=[&](){ addQuad(v,X0,Ym, X0,Y0, thickness); }; // lower left
-    auto F=[&](){ addQuad(v,X0,Y1, X0,Ym, thickness); }; // upper left
-    auto G=[&](){ addQuad(v,X0,Ym, X1,Ym, thickness); }; // middle
+    auto A=[&](){ addQuad(v,X0,Y1, X1,Y1, thickness); };
+    auto B=[&](){ addQuad(v,X1,Y1, X1,Ym, thickness); };
+    auto C=[&](){ addQuad(v,X1,Ym, X1,Y0, thickness); };
+    auto D=[&](){ addQuad(v,X0,Y0, X1,Y0, thickness); };
+    auto E=[&](){ addQuad(v,X0,Ym, X0,Y0, thickness); };
+    auto F=[&](){ addQuad(v,X0,Y1, X0,Ym, thickness); };
+    auto G=[&](){ addQuad(v,X0,Ym, X1,Ym, thickness); };
     switch(d){
         case 0: A();B();C();D();E();F(); break;
         case 1: B();C(); break;
@@ -178,7 +177,7 @@ static std::vector<Numeral> buildNumerals(){
     std::vector<Numeral> out(13);
     for(int n=1;n<=12;n++){
         std::vector<float> verts, d1, d2;
-        float t = 0.22f;              // segment thickness (fatter = bolder)
+        float t = 0.22f;              // segment thickness
         if(n<10){
             genDigitFilled(n, t, d1);
             verts.insert(verts.end(), d1.begin(), d1.end());
@@ -188,9 +187,7 @@ static std::vector<Numeral> buildNumerals(){
             genDigitFilled(tens, t, d1);
             genDigitFilled(ones, t, d2);
             float gap=0.20f, offset=0.70f+gap;
-            // tens (left)
             for(size_t i=0;i<d1.size(); i+=2){ verts.push_back(d1[i]-offset); verts.push_back(d1[i+1]); }
-            // ones (right)
             for(size_t i=0;i<d2.size(); i+=2){ verts.push_back(d2[i]+offset); verts.push_back(d2[i+1]); }
             out[n].width = 2.0f;
         }
@@ -250,7 +247,7 @@ int main(){
     const double TAU = 6.28318530718;
 
     auto placeAngle = [&](int n)->float {
-        // n=12 at top; others clockwise every 30 degrees
+        // n=12 at top; others clockwise every 30°
         int idx = n % 12; // 12 -> 0
         return float(-TAU*(idx/12.0f) + TAU*0.25f);
     };
@@ -297,12 +294,12 @@ int main(){
 
         // ticks
         glUniform3f(uColor, 0,0,0);
-        glLineWidth(1.2f);  minTicks.draw(); // visual thin
+        glLineWidth(1.2f);  minTicks.draw();
         glLineWidth(2.0f);  hrTicks.draw();
 
-        // numerals (filled, upright)
-        float rNum = 0.66f;   // radius
-        float sNum = 0.16f;   // overall size of digits
+        // numerals (smaller + closer to the tick ring)
+        float rNum = 0.73f;   // moved outward to tuck near ticks
+        float sNum = 0.10f;   // smaller overall size
         glUniform3f(uColor, 0,0,0);
         for(int n=1;n<=12;n++){
             float ang = placeAngle(n);
