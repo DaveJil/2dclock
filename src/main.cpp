@@ -81,7 +81,7 @@ static Mesh makeMesh(const std::vector<float>& v, GLenum mode=GL_TRIANGLES){
     return m;
 }
 
-// ---------- Simple shapes ----------
+// ---------- Basic shapes ----------
 static void genRing(int seg, float r0, float r1, std::vector<float>& v){
     v.clear(); v.reserve((seg+1)*4);
     for(int i=0;i<=seg;i++){
@@ -106,38 +106,88 @@ static void genTicks(int count, float innerR, float outerR, std::vector<float>& 
         v.push_back(c*outerR); v.push_back(s*outerR);
     }
 }
-static void genSpadeHour(std::vector<float>& v){
+
+// ---------- Hands (clean, self-contained sizes) ----------
+// Spade-style HOUR hand: stem + spade tip + short tail, length within dial
+static void genHourHand(std::vector<float>& v){
     v.clear();
     auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
-    float w=0.60f, L=0.72f;
-    tri(-0.5f*w,0,  0.5f*w,0,  0.5f*w,L);
-    tri(-0.5f*w,0,  0.5f*w,L, -0.5f*w,L);
-    std::vector<float> fan; genDiscFan(48,fan);
-    float r=0.40f, cy=L+0.15f;
+
+    const float L    = 0.62f;  // forward reach
+    const float W    = 0.12f;  // stem width
+    const float TAIL = 0.08f;  // short tail behind pivot
+    const float SP_R = 0.14f;  // spade bulb radius
+    const float SP_Y = L - 0.08f;
+
+    // stem
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L-0.12f);
+    tri(-0.5f*W, 0.0f,  0.5f*W, L-0.12f, -0.5f*W, L-0.12f);
+
+    // spade bulb (fan)
+    std::vector<float> fan; genDiscFan(48, fan);
     for(int i=1;i<(int)fan.size()/2-1;i++){
-        float x0=0, y0=cy;
-        float x1=fan[i*2]*r,     y1=fan[i*2+1]*r + cy;
-        float x2=fan[(i+1)*2]*r, y2=fan[(i+1)*2+1]*r + cy;
+        float x0=0, y0=SP_Y;
+        float x1=fan[i*2]*SP_R,     y1=fan[i*2+1]*SP_R + SP_Y;
+        float x2=fan[(i+1)*2]*SP_R, y2=fan[(i+1)*2+1]*SP_R + SP_Y;
+        tri(x0,y0,x1,y1,x2,y2);
+    }
+
+    // small tail rectangle
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL);
+    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL, -0.5f*W, 0.0f);
+}
+
+// Dauphine-style MINUTE hand: long tapered pointer + tiny tail
+static void genMinuteHand(std::vector<float>& v){
+    v.clear();
+    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
+
+    const float L    = 0.88f;  // forward reach
+    const float W    = 0.08f;  // base width
+    const float TAIL = 0.10f;  // small tail
+
+    // base rectangle up to near tip
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L-0.12f);
+    tri(-0.5f*W, 0.0f,  0.5f*W, L-0.12f, -0.5f*W, L-0.12f);
+
+    // tapered tip triangle
+    tri(-0.45f*W, L-0.12f,  0.45f*W, L-0.12f,  0.0f, L);
+
+    // tiny tail
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL);
+    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL, -0.5f*W, 0.0f);
+}
+
+// SECOND hand: needle + counterweight tail (never exceeds dial)
+static void genSecondHand(std::vector<float>& v){
+    v.clear();
+    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
+
+    const float L      = 0.95f;  // forward reach
+    const float W      = 0.02f;  // needle width
+    const float TAIL_L = 0.18f;  // tail length
+    const float HUB_R  = 0.035f; // round hub
+
+    // needle (rectangle)
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L);
+    tri(-0.5f*W, 0.0f,  0.5f*W, L,     -0.5f*W, L);
+
+    // tail (rectangle)
+    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL_L);
+    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL_L, -0.5f*W, 0.0f);
+
+    // hub disc
+    std::vector<float> fan; genDiscFan(32, fan);
+    for(int i=1;i<(int)fan.size()/2-1;i++){
+        float x0=0, y0=0;
+        float x1=fan[i*2]*HUB_R,     y1=fan[i*2+1]*HUB_R;
+        float x2=fan[(i+1)*2]*HUB_R, y2=fan[(i+1)*2+1]*HUB_R;
         tri(x0,y0,x1,y1,x2,y2);
     }
 }
-static void genPointerMinute(std::vector<float>& v){
-    v.clear();
-    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
-    float w=0.30f, L=0.95f;
-    tri(-0.5f*w,0,  0.5f*w,0,  0.5f*w,L-0.10f);
-    tri(-0.5f*w,0,  0.5f*w,L-0.10f, -0.5f*w,L-0.10f);
-    tri(-0.35f*w,L-0.10f,  0.35f*w,L-0.10f,  0.0f,L);
-}
-static void genSecondThin(std::vector<float>& v){
-    const float w=0.12f, L=1.00f;
-    v = { -0.5f*w,0,  0.5f*w,0,  0.5f*w,L,
-          -0.5f*w,0,  0.5f*w,L, -0.5f*w,L };
-}
 
-// ---------- Thick (filled) 7‑segment digits ----------
+// ---------- Thick (filled) 7‑segment digits for numerals ----------
 static void addQuad(std::vector<float>& v, float x1,float y1,float x2,float y2,float t){
-    // rectangle centered on segment (x1,y1)->(x2,y2), thickness t
     float dx=x2-x1, dy=y2-y1;
     float len = std::sqrt(dx*dx+dy*dy); if(len==0) return;
     dx/=len; dy/=len;
@@ -171,13 +221,12 @@ static void genDigitFilled(int d, float thickness, std::vector<float>& v){
         case 9: A();B();C();D();F();G(); break;
     }
 }
-
 struct Numeral { Mesh mesh; float width; };
 static std::vector<Numeral> buildNumerals(){
     std::vector<Numeral> out(13);
     for(int n=1;n<=12;n++){
         std::vector<float> verts, d1, d2;
-        float t = 0.22f;              // segment thickness
+        float t = 0.22f;              // segment thickness (bold)
         if(n<10){
             genDigitFilled(n, t, d1);
             verts.insert(verts.end(), d1.begin(), d1.end());
@@ -233,12 +282,13 @@ int main(){
     // Ticks
     genTicks(60, 0.82f, 0.88f, tmp);      Mesh minTicks = makeMesh(tmp, GL_LINES);
     genTicks(12, 0.78f, 0.90f, tmp);      Mesh hrTicks  = makeMesh(tmp, GL_LINES);
-    // Hands
-    genSpadeHour(tmp);                     Mesh hourHand = makeMesh(tmp);
-    genPointerMinute(tmp);                 Mesh minHand  = makeMesh(tmp);
-    genSecondThin(tmp);                    Mesh secHand  = makeMesh(tmp);
+    // Hands (clean, self-scaled)
+    genHourHand(tmp);                      Mesh hourHand = makeMesh(tmp);
+    genMinuteHand(tmp);                    Mesh minHand  = makeMesh(tmp);
+    genSecondHand(tmp);                    Mesh secHand  = makeMesh(tmp);
+    // Center cap
     genDiscFan(40, tmp);                   Mesh cap      = makeMesh(tmp, GL_TRIANGLE_FAN);
-    // Numerals (filled)
+    // Numerals
     auto numerals = buildNumerals();
 
     glEnable(GL_MULTISAMPLE);
@@ -247,7 +297,7 @@ int main(){
     const double TAU = 6.28318530718;
 
     auto placeAngle = [&](int n)->float {
-        // n=12 at top; others clockwise every 30°
+        // n=12 at top; clockwise every 30°
         int idx = n % 12; // 12 -> 0
         return float(-TAU*(idx/12.0f) + TAU*0.25f);
     };
@@ -279,17 +329,18 @@ int main(){
         glClear(GL_COLOR_BUFFER_BIT);
 
         glUseProgram(prog);
+
+        // background
         glUniform1f(uAngle, 0.0f);
         glUniform2f(uTrans, 0,0);
 
-        // bezel
-        glUniform3f(uColor, 0.42f,0.22f,0.12f);
+        glUniform3f(uColor, 0.42f,0.22f,0.12f); // bezel
         glUniform2f(uScale, 1.0f,1.0f); bezel.draw();
-        // white dial
-        glUniform3f(uColor, 1,1,1);
+
+        glUniform3f(uColor, 1,1,1);            // dial
         glUniform2f(uScale, 0.86f,0.86f); dial.draw();
-        // chapter ring
-        glUniform3f(uColor, 0.75f,0.75f,0.75f);
+
+        glUniform3f(uColor, 0.75f,0.75f,0.75f);// chapter ring
         glUniform2f(uScale, 1.0f,1.0f); chap.draw();
 
         // ticks
@@ -297,9 +348,9 @@ int main(){
         glLineWidth(1.2f);  minTicks.draw();
         glLineWidth(2.0f);  hrTicks.draw();
 
-        // numerals (smaller + closer to the tick ring)
-        float rNum = 0.73f;   // moved outward to tuck near ticks
-        float sNum = 0.10f;   // smaller overall size
+        // numerals (small + tucked)
+        float rNum = 0.73f;
+        float sNum = 0.10f;
         glUniform3f(uColor, 0,0,0);
         for(int n=1;n<=12;n++){
             float ang = placeAngle(n);
@@ -311,17 +362,31 @@ int main(){
             numerals[n].mesh.draw();
         }
 
-        // hands
+        // hands (no extra scaling, they’re modeled to size)
         glUniform2f(uTrans, 0,0);
-        glUniform3f(uColor, 0,0,0);
-        glUniform1f(uAngle, aH); glUniform2f(uScale, 0.06f, 0.55f); hourHand.draw();
-        glUniform1f(uAngle, aM); glUniform2f(uScale, 0.04f, 0.88f); minHand.draw();
 
-        glUniform3f(uColor, 0.80f,0.70f,0.35f);         // gold second
-        glUniform1f(uAngle, aS); glUniform2f(uScale, 0.02f, 0.92f); secHand.draw();
-
+        // hour (black)
         glUniform3f(uColor, 0,0,0);
-        glUniform1f(uAngle, 0.0f); glUniform2f(uScale, 0.035f, 0.035f); cap.draw();
+        glUniform1f(uAngle, aH);
+        glUniform2f(uScale, 1.0f, 1.0f);
+        hourHand.draw();
+
+        // minute (black)
+        glUniform1f(uAngle, aM);
+        glUniform2f(uScale, 1.0f, 1.0f);
+        minHand.draw();
+
+        // second (gold)
+        glUniform3f(uColor, 0.80f, 0.70f, 0.35f);
+        glUniform1f(uAngle, aS);
+        glUniform2f(uScale, 1.0f, 1.0f);
+        secHand.draw();
+
+        // center cap
+        glUniform3f(uColor, 0,0,0);
+        glUniform1f(uAngle, 0.0f);
+        glUniform2f(uScale, 0.035f, 0.035f);
+        cap.draw();
 
         glfwSwapBuffers(win);
     }
