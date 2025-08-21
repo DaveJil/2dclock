@@ -1,251 +1,226 @@
+// src/main.cpp
 #ifndef GL_SILENCE_DEPRECATION
 #define GL_SILENCE_DEPRECATION
 #endif
 #include <OpenGL/gl3.h>
 #include <GLFW/glfw3.h>
 
-#include <vector>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 #include <chrono>
 #include <ctime>
 
-// ---------- Shaders (GLSL 1.50 core) ----------
-static const char* kVS = R"GLSL(
+// ----------- Shaders (GLSL 1.50 core for macOS OpenGL 3.2) -----------
+static const char* VS_SRC = R"GLSL(
 #version 150 core
 in vec2 aPos;
-uniform float uAngle;      // radians; clockwise positive by convention
+uniform float uAngle;      // radians, clockwise positive
 uniform vec2  uScale;      // NDC scale
-uniform vec2  uTranslate;  // NDC translate
+uniform vec2  uTrans;      // NDC translate
 void main(){
     float c = cos(uAngle), s = sin(uAngle);
     vec2 p = vec2(c*aPos.x - s*aPos.y, s*aPos.x + c*aPos.y);
-    p = p * uScale + uTranslate;
+    p = p * uScale + uTrans;
     gl_Position = vec4(p, 0.0, 1.0);
 }
 )GLSL";
 
-static const char* kFS = R"GLSL(
+static const char* FS_SRC = R"GLSL(
 #version 150 core
 out vec4 FragColor;
 uniform vec3 uColor;
 void main(){ FragColor = vec4(uColor, 1.0); }
 )GLSL";
 
-// ---------- GL helpers ----------
+// ----------- GL helpers -----------
 static GLuint makeShader(GLenum type, const char* src){
     GLuint sh = glCreateShader(type);
-    glShaderSource(sh,1,&src,nullptr);
+    glShaderSource(sh, 1, &src, nullptr);
     glCompileShader(sh);
-    GLint ok=0; glGetShaderiv(sh,GL_COMPILE_STATUS,&ok);
+    GLint ok=0; glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
     if(!ok){
-        GLint len=0; glGetShaderiv(sh,GL_INFO_LOG_LENGTH,&len);
-        std::vector<char> log(len); glGetShaderInfoLog(sh,len,nullptr,log.data());
-        std::fprintf(stderr,"[Shader] %s\n", log.data());
+        GLint len=0; glGetShaderiv(sh, GL_INFO_LOG_LENGTH, &len);
+        std::vector<char> log(len);
+        glGetShaderInfoLog(sh, len, nullptr, log.data());
+        std::fprintf(stderr, "[Shader] %s\n", log.data());
     }
     return sh;
 }
 static GLuint makeProgram(const char* vs, const char* fs){
-    GLuint v = makeShader(GL_VERTEX_SHADER,vs);
-    GLuint f = makeShader(GL_FRAGMENT_SHADER,fs);
+    GLuint v = makeShader(GL_VERTEX_SHADER, vs);
+    GLuint f = makeShader(GL_FRAGMENT_SHADER, fs);
     GLuint p = glCreateProgram();
-    glAttachShader(p,v); glAttachShader(p,f);
-    glBindAttribLocation(p,0,"aPos"); // GLSL 150
+    glAttachShader(p, v);
+    glAttachShader(p, f);
+    // GLSL 1.50 core doesn't support layout(location=..)
+    glBindAttribLocation(p, 0, "aPos");
     glLinkProgram(p);
-    glDeleteShader(v); glDeleteShader(f);
-    GLint ok=0; glGetProgramiv(p,GL_LINK_STATUS,&ok);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    GLint ok=0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if(!ok){
-        GLint len=0; glGetProgramiv(p,GL_INFO_LOG_LENGTH,&len);
-        std::vector<char> log(len); glGetProgramInfoLog(p,len,nullptr,log.data());
-        std::fprintf(stderr,"[Link] %s\n", log.data());
+        GLint len=0; glGetProgramiv(p, GL_INFO_LOG_LENGTH, &len);
+        std::vector<char> log(len);
+        glGetProgramInfoLog(p, len, nullptr, log.data());
+        std::fprintf(stderr, "[Link] %s\n", log.data());
     }
     return p;
 }
 
-// ---------- Mesh ----------
-struct Mesh{
-    GLuint vao=0,vbo=0; GLsizei count=0; GLenum mode=GL_TRIANGLES;
-    void draw() const { glBindVertexArray(vao); glDrawArrays(mode,0,count); glBindVertexArray(0); }
-    void destroy(){ if(vbo) glDeleteBuffers(1,&vbo); if(vao) glDeleteVertexArrays(1,&vao); vao=vbo=0; }
+// ----------- Simple Mesh wrapper (triangles) -----------
+struct Mesh {
+    GLuint vao=0, vbo=0;
+    GLsizei count=0;
+    void init(const std::vector<float>& pts){
+        count = (GLsizei)(pts.size()/2);
+        glGenVertexArrays(1, &vao);
+        glBindVertexArray(vao);
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, pts.size()*sizeof(float), pts.data(), GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), (void*)0);
+        glBindVertexArray(0);
+    }
+    void draw() const {
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, count);
+        glBindVertexArray(0);
+    }
+    void destroy(){
+        if(vbo) glDeleteBuffers(1,&vbo);
+        if(vao) glDeleteVertexArrays(1,&vao);
+        vbo=vao=0;
+    }
 };
-static Mesh makeMesh(const std::vector<float>& v, GLenum mode=GL_TRIANGLES){
-    Mesh m; m.mode=mode; m.count=(GLsizei)(v.size()/2);
-    glGenVertexArrays(1,&m.vao);
-    glGenBuffers(1,&m.vbo);
-    glBindVertexArray(m.vao);
-    glBindBuffer(GL_ARRAY_BUFFER,m.vbo);
-    glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,2*sizeof(float),(void*)0);
-    glBindVertexArray(0);
-    return m;
+
+// ----------- Geometry generators (all centered at pivot) -----------
+static void addTri(std::vector<float>& v, float x1,float y1,float x2,float y2,float x3,float y3){
+    v.insert(v.end(), {x1,y1, x2,y2, x3,y3});
+}
+static void addBox(std::vector<float>& v, float x0,float y0,float x1,float y1){
+    // two triangles
+    addTri(v, x0,y0, x1,y0, x1,y1);
+    addTri(v, x0,y0, x1,y1, x0,y1);
 }
 
-// ---------- Basic shapes ----------
-static void genRing(int seg, float r0, float r1, std::vector<float>& v){
-    v.clear(); v.reserve((seg+1)*4);
-    for(int i=0;i<=seg;i++){
-        float t=i*(6.28318530718f/seg), c=std::cos(t), s=std::sin(t);
-        v.push_back(c*r0); v.push_back(s*r0);
-        v.push_back(c*r1); v.push_back(s*r1);
-    }
-}
+// filled disc centered at origin, unit radius
 static void genDiscFan(int seg, std::vector<float>& v){
-    v.clear(); v.reserve((seg+2)*2);
-    v.push_back(0); v.push_back(0);
-    for(int i=0;i<=seg;i++){
-        float t=i*(6.28318530718f/seg);
-        v.push_back(std::cos(t)); v.push_back(std::sin(t));
+    v.clear();
+    for(int i=0;i<seg;i++){
+        float a1 = 2.0f*M_PI*(i    /(float)seg);
+        float a2 = 2.0f*M_PI*((i+1)/(float)seg);
+        addTri(v, 0,0, std::cos(a1),std::sin(a1), std::cos(a2),std::sin(a2));
     }
 }
-static void genTicks(int count, float innerR, float outerR, std::vector<float>& v){
-    v.clear(); v.reserve(count*4);
-    for(int i=0;i<count;i++){
-        float t=i*(6.28318530718f/count), c=std::cos(t), s=std::sin(t);
-        v.push_back(c*innerR); v.push_back(s*innerR);
-        v.push_back(c*outerR); v.push_back(s*outerR);
+// ring (triangle strip unrolled to triangles)
+static void genRing(int seg, float r0, float r1, std::vector<float>& v){
+    v.clear();
+    for(int i=0;i<seg;i++){
+        float a1 = 2.0f*M_PI*(i    /(float)seg);
+        float a2 = 2.0f*M_PI*((i+1)/(float)seg);
+        float c1=std::cos(a1), s1=std::sin(a1);
+        float c2=std::cos(a2), s2=std::sin(a2);
+        // two tris per segment
+        addTri(v, c1*r0,s1*r0, c1*r1,s1*r1, c2*r1,s2*r1);
+        addTri(v, c1*r0,s1*r0, c2*r1,s2*r1, c2*r0,s2*r0);
     }
 }
 
-// ---------- Hands (clean, self-contained sizes) ----------
-// Spade-style HOUR hand: stem + spade tip + short tail, length within dial
+// Numeral glyphs (simple filled block digits 0-9 in [-0.5..0.5]^2)
+static void genDigit(std::vector<float>& v, int d){
+    v.clear();
+    auto box = [&](float x0,float y0,float x1,float y1){ addBox(v,x0,y0,x1,y1); };
+    switch(d){
+        case 0: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f);
+                box(-0.45f,-0.55f,-0.25f, 0.55f);
+                box( 0.25f,-0.55f, 0.45f, 0.55f); break;
+        case 1: box( 0.15f,-0.55f, 0.35f, 0.55f); break;
+        case 2: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box( 0.25f, 0.15f, 0.45f, 0.35f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box(-0.45f,-0.55f,-0.25f,-0.35f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f); break;
+        case 3: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box( 0.25f, 0.15f, 0.45f, 0.35f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box( 0.25f,-0.35f, 0.45f,-0.15f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f); break;
+        case 4: box(-0.45f, 0.05f,-0.25f, 0.55f);
+                box( 0.25f, 0.05f, 0.45f, 0.55f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box( 0.25f,-0.55f, 0.45f,-0.05f); break;
+        case 5: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box(-0.45f, 0.15f,-0.25f, 0.35f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box( 0.25f,-0.35f, 0.45f,-0.15f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f); break;
+        case 6: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box(-0.45f,-0.05f,-0.25f, 0.35f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box( 0.25f,-0.35f, 0.45f,-0.15f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f); break;
+        case 7: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box( 0.25f,-0.55f, 0.45f, 0.35f); break;
+        case 8: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box(-0.45f,-0.55f, 0.45f,-0.35f);
+                box(-0.45f,-0.55f,-0.25f, 0.55f);
+                box( 0.25f,-0.55f, 0.45f, 0.55f); break;
+        case 9: box(-0.45f, 0.35f, 0.45f, 0.55f);
+                box(-0.45f, 0.15f,-0.25f, 0.55f);
+                box(-0.45f,-0.05f, 0.45f, 0.15f);
+                box( 0.25f,-0.55f, 0.45f,-0.15f); break;
+    }
+}
+
+// ----- Hands (small/clean to match the reference look) -----
 static void genHourHand(std::vector<float>& v){
     v.clear();
-    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
-
-    const float L    = 0.62f;  // forward reach
-    const float W    = 0.12f;  // stem width
-    const float TAIL = 0.08f;  // short tail behind pivot
-    const float SP_R = 0.14f;  // spade bulb radius
-    const float SP_Y = L - 0.08f;
-
-    // stem
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L-0.12f);
-    tri(-0.5f*W, 0.0f,  0.5f*W, L-0.12f, -0.5f*W, L-0.12f);
-
-    // spade bulb (fan)
-    std::vector<float> fan; genDiscFan(48, fan);
-    for(int i=1;i<(int)fan.size()/2-1;i++){
-        float x0=0, y0=SP_Y;
-        float x1=fan[i*2]*SP_R,     y1=fan[i*2+1]*SP_R + SP_Y;
-        float x2=fan[(i+1)*2]*SP_R, y2=fan[(i+1)*2+1]*SP_R + SP_Y;
-        tri(x0,y0,x1,y1,x2,y2);
-    }
-
-    // small tail rectangle
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL);
-    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL, -0.5f*W, 0.0f);
+    const float L    = 0.50f;  // shorter reach
+    const float W    = 0.10f;  // stem width
+    const float TAIL = 0.06f;  // short tail
+    // stem rectangle
+    addBox(v, -0.5f*W, 0.0f,  0.5f*W, L);
+    // tiny tail
+    addBox(v, -0.5f*W, -TAIL, 0.5f*W, 0.0f);
 }
 
-// Dauphine-style MINUTE hand: long tapered pointer + tiny tail
 static void genMinuteHand(std::vector<float>& v){
     v.clear();
-    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
-
-    const float L    = 0.88f;  // forward reach
-    const float W    = 0.08f;  // base width
-    const float TAIL = 0.10f;  // small tail
-
-    // base rectangle up to near tip
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L-0.12f);
-    tri(-0.5f*W, 0.0f,  0.5f*W, L-0.12f, -0.5f*W, L-0.12f);
-
-    // tapered tip triangle
-    tri(-0.45f*W, L-0.12f,  0.45f*W, L-0.12f,  0.0f, L);
-
-    // tiny tail
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL);
-    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL, -0.5f*W, 0.0f);
+    const float L    = 0.72f;  // ends before numerals
+    const float W    = 0.06f;
+    const float TAIL = 0.08f;
+    // base rectangle
+    addBox(v, -0.5f*W, 0.0f,  0.5f*W, L-0.10f);
+    // tapered tip
+    addTri(v, -0.45f*W, L-0.10f,  0.45f*W, L-0.10f,  0.0f, L);
+    // tail
+    addBox(v, -0.5f*W, -TAIL, 0.5f*W, 0.0f);
 }
 
-// SECOND hand: needle + counterweight tail (never exceeds dial)
 static void genSecondHand(std::vector<float>& v){
     v.clear();
-    auto tri=[&](float a,float b,float c,float d,float e,float f){ v.insert(v.end(),{a,b,c,d,e,f}); };
-
-    const float L      = 0.95f;  // forward reach
-    const float W      = 0.02f;  // needle width
-    const float TAIL_L = 0.18f;  // tail length
-    const float HUB_R  = 0.035f; // round hub
-
-    // needle (rectangle)
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, L);
-    tri(-0.5f*W, 0.0f,  0.5f*W, L,     -0.5f*W, L);
-
-    // tail (rectangle)
-    tri(-0.5f*W, 0.0f,  0.5f*W, 0.0f,  0.5f*W, -TAIL_L);
-    tri(-0.5f*W, 0.0f,  0.5f*W, -TAIL_L, -0.5f*W, 0.0f);
-
-    // hub disc
+    const float L      = 0.82f;   // shorter needle
+    const float W      = 0.018f;  // thin
+    const float TAIL_L = 0.15f;
+    const float HUB_R  = 0.030f;
+    // needle
+    addBox(v, -0.5f*W, 0.0f, 0.5f*W, L);
+    // tail
+    addBox(v, -0.5f*W, -TAIL_L, 0.5f*W, 0.0f);
+    // hub disc (filled)
     std::vector<float> fan; genDiscFan(32, fan);
-    for(int i=1;i<(int)fan.size()/2-1;i++){
-        float x0=0, y0=0;
-        float x1=fan[i*2]*HUB_R,     y1=fan[i*2+1]*HUB_R;
-        float x2=fan[(i+1)*2]*HUB_R, y2=fan[(i+1)*2+1]*HUB_R;
-        tri(x0,y0,x1,y1,x2,y2);
+    for(size_t i=0;i<fan.size(); i+=6){
+        addTri(v, fan[i+0]*HUB_R, fan[i+1]*HUB_R,
+                  fan[i+2]*HUB_R, fan[i+3]*HUB_R,
+                  fan[i+4]*HUB_R, fan[i+5]*HUB_R);
     }
 }
 
-// ---------- Thick (filled) 7‑segment digits for numerals ----------
-static void addQuad(std::vector<float>& v, float x1,float y1,float x2,float y2,float t){
-    float dx=x2-x1, dy=y2-y1;
-    float len = std::sqrt(dx*dx+dy*dy); if(len==0) return;
-    dx/=len; dy/=len;
-    float px=-dy*(t*0.5f), py=dx*(t*0.5f);
-    float ax=x1+px, ay=y1+py;
-    float bx=x2+px, by=y2+py;
-    float cx=x2-px, cy=y2-py;
-    float dx2=x1-px,dy2=y1-py;
-    v.insert(v.end(), { ax,ay, bx,by, cx,cy,  ax,ay, cx,cy, dx2,dy2 });
-}
-static const float X0=-0.45f, X1=0.45f, Y0=-0.60f, Y1=0.60f, Ym=0.0f;
-static void genDigitFilled(int d, float thickness, std::vector<float>& v){
-    v.clear();
-    auto A=[&](){ addQuad(v,X0,Y1, X1,Y1, thickness); };
-    auto B=[&](){ addQuad(v,X1,Y1, X1,Ym, thickness); };
-    auto C=[&](){ addQuad(v,X1,Ym, X1,Y0, thickness); };
-    auto D=[&](){ addQuad(v,X0,Y0, X1,Y0, thickness); };
-    auto E=[&](){ addQuad(v,X0,Ym, X0,Y0, thickness); };
-    auto F=[&](){ addQuad(v,X0,Y1, X0,Ym, thickness); };
-    auto G=[&](){ addQuad(v,X0,Ym, X1,Ym, thickness); };
-    switch(d){
-        case 0: A();B();C();D();E();F(); break;
-        case 1: B();C(); break;
-        case 2: A();B();G();E();D(); break;
-        case 3: A();B();G();C();D(); break;
-        case 4: F();G();B();C(); break;
-        case 5: A();F();G();C();D(); break;
-        case 6: A();F();G();E();D();C(); break;
-        case 7: A();B();C(); break;
-        case 8: A();B();C();D();E();F();G(); break;
-        case 9: A();B();C();D();F();G(); break;
-    }
-}
-struct Numeral { Mesh mesh; float width; };
-static std::vector<Numeral> buildNumerals(){
-    std::vector<Numeral> out(13);
-    for(int n=1;n<=12;n++){
-        std::vector<float> verts, d1, d2;
-        float t = 0.22f;              // segment thickness (bold)
-        if(n<10){
-            genDigitFilled(n, t, d1);
-            verts.insert(verts.end(), d1.begin(), d1.end());
-            out[n].width = 1.0f;
-        }else{
-            int tens=n/10, ones=n%10;
-            genDigitFilled(tens, t, d1);
-            genDigitFilled(ones, t, d2);
-            float gap=0.20f, offset=0.70f+gap;
-            for(size_t i=0;i<d1.size(); i+=2){ verts.push_back(d1[i]-offset); verts.push_back(d1[i+1]); }
-            for(size_t i=0;i<d2.size(); i+=2){ verts.push_back(d2[i]+offset); verts.push_back(d2[i+1]); }
-            out[n].width = 2.0f;
-        }
-        out[n].mesh = makeMesh(verts, GL_TRIANGLES);
-    }
-    return out;
-}
-
-// ---------- Time helper ----------
+// ---------- Time helper (local time, ticking seconds) ----------
 static double nowSeconds(){
     using namespace std::chrono;
     auto tp = system_clock::now();
@@ -254,50 +229,54 @@ static double nowSeconds(){
          + duration<double>(tp - s).count();
 }
 
+// ---------- Main ----------
 int main(){
-    // Window / context
     if(!glfwInit()){ std::fprintf(stderr,"GLFW init failed\n"); return 1; }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,2);
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT,GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT,GL_TRUE); // macOS
     glfwWindowHint(GLFW_SAMPLES,4);
 
-    GLFWwindow* win = glfwCreateWindow(800,800,"Analog Clock",nullptr,nullptr);
+    GLFWwindow* win = glfwCreateWindow(720,720, "2D Clock", nullptr, nullptr);
     if(!win){ glfwTerminate(); return 1; }
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
 
-    GLuint prog = makeProgram(kVS,kFS);
-    GLint uAngle = glGetUniformLocation(prog,"uAngle");
-    GLint uScale = glGetUniformLocation(prog,"uScale");
-    GLint uTrans = glGetUniformLocation(prog,"uTranslate");
-    GLint uColor = glGetUniformLocation(prog,"uColor");
+    GLuint prog = makeProgram(VS_SRC, FS_SRC);
+    glUseProgram(prog);
+    GLint uAng = glGetUniformLocation(prog, "uAngle");
+    GLint uSc  = glGetUniformLocation(prog, "uScale");
+    GLint uTr  = glGetUniformLocation(prog, "uTrans");
+    GLint uCol = glGetUniformLocation(prog, "uColor");
 
+    // Build meshes
     std::vector<float> tmp;
-    // Bezel + dial + chapter ring
-    genRing(256, 0.98f, 0.86f, tmp);      Mesh bezel  = makeMesh(tmp, GL_TRIANGLE_STRIP);
-    genDiscFan(128, tmp);                 Mesh dial   = makeMesh(tmp, GL_TRIANGLE_FAN);
-    genRing(256, 0.84f, 0.82f, tmp);      Mesh chap   = makeMesh(tmp, GL_TRIANGLE_STRIP);
+
+    // Dial elements
+    genRing(256, 0.98f, 0.86f, tmp);  Mesh bezel; bezel.init(tmp);     // outer ring
+    genDiscFan(128, tmp);             Mesh dial;  dial.init(tmp);      // white face (unit disc)
+    genRing(256, 0.84f, 0.82f, tmp);  Mesh chap;  chap.init(tmp);      // inner chapter ring
+
     // Ticks
-    genTicks(60, 0.82f, 0.88f, tmp);      Mesh minTicks = makeMesh(tmp, GL_LINES);
-    genTicks(12, 0.78f, 0.90f, tmp);      Mesh hrTicks  = makeMesh(tmp, GL_LINES);
-    // Hands (clean, self-scaled)
-    genHourHand(tmp);                      Mesh hourHand = makeMesh(tmp);
-    genMinuteHand(tmp);                    Mesh minHand  = makeMesh(tmp);
-    genSecondHand(tmp);                    Mesh secHand  = makeMesh(tmp);
-    // Center cap
-    genDiscFan(40, tmp);                   Mesh cap      = makeMesh(tmp, GL_TRIANGLE_FAN);
-    // Numerals
-    auto numerals = buildNumerals();
+    // (drawn as lines would be thin on macOS; we’ll leave them out here for simplicity)
+
+    // Hands
+    genHourHand(tmp);   Mesh mh; mh.init(tmp);
+    genMinuteHand(tmp); Mesh mm; mm.init(tmp);
+    genSecondHand(tmp); Mesh ms; ms.init(tmp);
+
+    // Numerals: small & tucked near the chapter ring
+    Mesh digits[13];
+    for(int n=1;n<=12;n++){ genDigit(tmp, n%10); digits[n].init(tmp); }
 
     glEnable(GL_MULTISAMPLE);
     glClearColor(1,1,1,1);
 
     const double TAU = 6.28318530718;
 
-    auto placeAngle = [&](int n)->float {
-        // n=12 at top; clockwise every 30°
+    auto numeralAngle = [&](int n)->float{
+        // 12 at top; clockwise
         int idx = n % 12; // 12 -> 0
         return float(-TAU*(idx/12.0f) + TAU*0.25f);
     };
@@ -305,19 +284,19 @@ int main(){
     while(!glfwWindowShouldClose(win)){
         glfwPollEvents();
 
-        // time: ticking seconds, smooth minute/hour
+        // Local time
         double tnow = nowSeconds();
         std::time_t tt = (std::time_t)tnow;
         std::tm lt{};
     #if defined(_WIN32)
-        localtime_s(&lt,&tt);
+        localtime_s(&lt, &tt);
     #else
         lt = *std::localtime(&tt);
     #endif
-        int s_i = lt.tm_sec;         // tick exactly each second
-        double s = double(s_i);
-        double m = lt.tm_min + s/60.0;
-        double h = (lt.tm_hour%12) + m/60.0;
+        int    s_i = lt.tm_sec;                  // tick
+        double s   = double(s_i);
+        double m   = lt.tm_min + s/60.0;
+        double h   = (lt.tm_hour % 12) + m/60.0;
 
         auto toA = [&](double f)->float { return float(-TAU*f + TAU*0.25f); };
         float aS = toA(s/60.0);
@@ -328,72 +307,65 @@ int main(){
         glViewport(0,0,W,H);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        glUseProgram(prog);
+        // ---- Draw dial ----
+        glUniform1f(uAng, 0.0f);
+        glUniform2f(uTr,  0.0f, 0.0f);
 
-        // background
-        glUniform1f(uAngle, 0.0f);
-        glUniform2f(uTrans, 0,0);
+        // outer bezel (brownish)
+        glUniform3f(uCol, 0.42f, 0.22f, 0.12f);
+        glUniform2f(uSc,  1.0f, 1.0f);
+        bezel.draw();
 
-        glUniform3f(uColor, 0.42f,0.22f,0.12f); // bezel
-        glUniform2f(uScale, 1.0f,1.0f); bezel.draw();
+        // white face
+        glUniform3f(uCol, 1.0f, 1.0f, 1.0f);
+        glUniform2f(uSc,  0.86f, 0.86f);
+        dial.draw();
 
-        glUniform3f(uColor, 1,1,1);            // dial
-        glUniform2f(uScale, 0.86f,0.86f); dial.draw();
+        // inner ring
+        glUniform3f(uCol, 0.75f, 0.75f, 0.75f);
+        glUniform2f(uSc,  1.0f, 1.0f);
+        chap.draw();
 
-        glUniform3f(uColor, 0.75f,0.75f,0.75f);// chapter ring
-        glUniform2f(uScale, 1.0f,1.0f); chap.draw();
-
-        // ticks
-        glUniform3f(uColor, 0,0,0);
-        glLineWidth(1.2f);  minTicks.draw();
-        glLineWidth(2.0f);  hrTicks.draw();
-
-        // numerals (small + tucked)
-        float rNum = 0.73f;
-        float sNum = 0.10f;
-        glUniform3f(uColor, 0,0,0);
+        // ---- Numerals ----
+        float rNum = 0.73f;   // tuck near inner ring
+        float sNum = 0.10f;   // small
+        glUniform3f(uCol, 0.0f, 0.0f, 0.0f);
         for(int n=1;n<=12;n++){
-            float ang = placeAngle(n);
+            float ang = numeralAngle(n);
             float cx = std::cos(ang)*rNum;
             float cy = std::sin(ang)*rNum;
-            glUniform1f(uAngle, 0.0f);          // upright
-            glUniform2f(uScale, sNum, sNum);
-            glUniform2f(uTrans, cx, cy);
-            numerals[n].mesh.draw();
+            glUniform1f(uAng, 0.0f);       // keep upright
+            glUniform2f(uSc,  sNum, sNum);
+            glUniform2f(uTr,  cx, cy);
+            digits[n].draw();
         }
 
-        // hands (no extra scaling, they’re modeled to size)
-        glUniform2f(uTrans, 0,0);
+        // ---- Hands ----
+        glUniform2f(uTr, 0.0f, 0.0f);
 
         // hour (black)
-        glUniform3f(uColor, 0,0,0);
-        glUniform1f(uAngle, aH);
-        glUniform2f(uScale, 1.0f, 1.0f);
-        hourHand.draw();
+        glUniform3f(uCol, 0,0,0);
+        glUniform1f(uAng, aH);
+        glUniform2f(uSc,  1.0f, 1.0f);
+        mh.draw();
 
         // minute (black)
-        glUniform1f(uAngle, aM);
-        glUniform2f(uScale, 1.0f, 1.0f);
-        minHand.draw();
+        glUniform1f(uAng, aM);
+        glUniform2f(uSc,  1.0f, 1.0f);
+        mm.draw();
 
         // second (gold)
-        glUniform3f(uColor, 0.80f, 0.70f, 0.35f);
-        glUniform1f(uAngle, aS);
-        glUniform2f(uScale, 1.0f, 1.0f);
-        secHand.draw();
-
-        // center cap
-        glUniform3f(uColor, 0,0,0);
-        glUniform1f(uAngle, 0.0f);
-        glUniform2f(uScale, 0.035f, 0.035f);
-        cap.draw();
+        glUniform3f(uCol, 0.80f, 0.70f, 0.35f);
+        glUniform1f(uAng, aS);
+        glUniform2f(uSc,  1.0f, 1.0f);
+        ms.draw();
 
         glfwSwapBuffers(win);
     }
 
-    for(int n=1;n<=12;n++) numerals[n].mesh.destroy();
-    cap.destroy(); secHand.destroy(); minHand.destroy(); hourHand.destroy();
-    hrTicks.destroy(); minTicks.destroy(); chap.destroy(); dial.destroy(); bezel.destroy();
+    for(int n=1;n<=12;n++) digits[n].destroy();
+    ms.destroy(); mm.destroy(); mh.destroy();
+    chap.destroy(); dial.destroy(); bezel.destroy();
     glDeleteProgram(prog);
     glfwDestroyWindow(win);
     glfwTerminate();
