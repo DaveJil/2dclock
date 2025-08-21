@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/clock2d.dir/src/main.cpp.o -o clock2d  -Wl,-rpath,/usr/local/lib /usr/local/lib/libglfw.3.4.dylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo

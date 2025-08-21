@@ -1,0 +1,3 @@
+/Users/davidogaranya/2dclock/build/CMakeFiles/clock2d.dir
+/Users/davidogaranya/2dclock/build/CMakeFiles/edit_cache.dir
+/Users/davidogaranya/2dclock/build/CMakeFiles/rebuild_cache.dir
